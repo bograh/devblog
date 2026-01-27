@@ -1,0 +1,5 @@
+{
+  "name": "DevBlog Platform",
+  "description": "A comprehensive blogging platform frontend featuring user authentication, post management, commenting, and system performance metrics visualization.",
+  "requestFramePermissions": []
+}
