@@ -1,213 +1,347 @@
-import { 
-  User, LoginRequest, RegisterRequest, Post, CreatePostRequest, 
+import {
+  User, LoginRequest, RegisterRequest, Post, CreatePostRequest, UpdatePostRequest,
   ApiResponse, PaginatedResponse, Comment, CreateCommentRequest,
-  MetricsMap, MetricsSummary, MethodMetricDetail
+  MetricsResponse, MetricsSummary, UserProfile
 } from '../types';
 
-// --- MOCK DATA STORE ---
-const DELAY_MS = 600;
+// --- API CONFIGURATION ---
+const BASE_URL = 'http://localhost:8080';
 
-// Initial Mock Data
-let users: User[] = [
-  { id: "550e8400-e29b-41d4-a716-446655440000", username: "johndoe", email: "john@example.com" },
-  { id: "660e8400-e29b-41d4-a716-446655440001", username: "janedoe", email: "jane@example.com" }
-];
+// --- LOCAL STORAGE HELPERS ---
+const USER_ID_KEY = 'devblog_user_id';
+const USER_KEY = 'devblog_user';
 
-let posts: Post[] = [
-  {
-    id: 1,
-    title: "Understanding React 18 Concurrency",
-    body: "React 18 introduces a new concurrency model that allows React to interrupt rendering...",
-    author: "johndoe",
-    authorId: "550e8400-e29b-41d4-a716-446655440000",
-    tags: ["react", "frontend", "javascript"],
-    postedAt: "2026-01-20T10:30:00",
-    lastUpdated: "2026-01-20T10:30:00",
-    totalComments: 2
+export const storage = {
+  getUserId: (): string | null => localStorage.getItem(USER_ID_KEY),
+  setUserId: (id: string): void => localStorage.setItem(USER_ID_KEY, id),
+  removeUserId: (): void => localStorage.removeItem(USER_ID_KEY),
+
+  getUser: (): User | null => {
+    const user = localStorage.getItem(USER_KEY);
+    return user ? JSON.parse(user) : null;
   },
-  {
-    id: 2,
-    title: "Spring Boot Performance Tuning",
-    body: "Optimizing JVM settings and connection pools is critical for high-throughput applications...",
-    author: "janedoe",
-    authorId: "660e8400-e29b-41d4-a716-446655440001",
-    tags: ["java", "spring", "backend"],
-    postedAt: "2026-01-25T14:15:00",
-    lastUpdated: "2026-01-26T09:00:00",
-    totalComments: 0
+  setUser: (user: User): void => localStorage.setItem(USER_KEY, JSON.stringify(user)),
+  removeUser: (): void => localStorage.removeItem(USER_KEY),
+
+  clear: (): void => {
+    localStorage.removeItem(USER_ID_KEY);
+    localStorage.removeItem(USER_KEY);
   }
-];
+};
 
-let comments: Comment[] = [
-  {
-    id: "507f1f77bcf86cd799439011",
-    postId: 1,
-    author: "janedoe",
-    content: "Great explanation of the new suspense features!",
-    createdAt: "2026-01-21T09:30:00"
-  },
-  {
-    id: "507f1f77bcf86cd799439012",
-    postId: 1,
-    author: "johndoe",
-    content: "Thanks Jane!",
-    createdAt: "2026-01-21T10:00:00"
+// --- HTTP HELPER ---
+async function request<T>(
+  endpoint: string,
+  options: RequestInit = {}
+): Promise<ApiResponse<T>> {
+  const url = `${BASE_URL}${endpoint}`;
+
+  const config: RequestInit = {
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+    ...options,
+  };
+
+  try {
+    const response = await fetch(url, config);
+
+    // Handle 204 No Content or empty responses
+    const contentType = response.headers.get('content-type');
+    const hasJson = contentType?.includes('application/json');
+    const text = await response.text();
+    const data = text && hasJson ? JSON.parse(text) : null;
+
+    if (!response.ok) {
+      // API returns error in specific format
+      return Promise.reject({
+        errorStatus: data?.errorStatus || 'error',
+        errorMessage: data?.errorMessage || 'Request failed',
+        errorCode: data?.errorCode || response.status,
+        timestamp: data?.timestamp || new Date().toISOString()
+      });
+    }
+
+    // For successful responses with no content (like DELETE), return success
+    if (!data) {
+      return { status: 'success', message: 'Operation successful' } as ApiResponse<T>;
+    }
+
+    return data as ApiResponse<T>;
+  } catch (error: any) {
+    // Network error or JSON parse error
+    if (error.errorStatus) {
+      throw error; // Re-throw API errors
+    }
+    throw {
+      errorStatus: 'error',
+      errorMessage: error.message || 'Network error',
+      errorCode: 500,
+      timestamp: new Date().toISOString()
+    };
   }
-];
-
-// Metrics Mock
-const mockMetrics: MetricsMap = {
-  "SERVICE::createPost": { callCount: 150, averageExecutionTimeMs: 45.5, maxExecutionTimeMs: 120, minExecutionTimeMs: 10, failureCount: 2, failureRate: 1.33 },
-  "REPOSITORY::findById": { callCount: 500, averageExecutionTimeMs: 5.2, maxExecutionTimeMs: 25, minExecutionTimeMs: 1, failureCount: 0, failureRate: 0.0 },
-  "SERVICE::processImage": { callCount: 45, averageExecutionTimeMs: 210.5, maxExecutionTimeMs: 800, minExecutionTimeMs: 150, failureCount: 5, failureRate: 11.1 },
-  "CONTROLLER::getAllPosts": { callCount: 1200, averageExecutionTimeMs: 15.0, maxExecutionTimeMs: 60, minExecutionTimeMs: 5, failureCount: 1, failureRate: 0.08 }
-};
-
-// --- HELPER FUNCTIONS ---
-
-const delay = <T>(data: T, ms = DELAY_MS): Promise<T> => {
-  return new Promise(resolve => setTimeout(() => resolve(data), ms));
-};
-
-const success = <T>(data: T, message = "Operation successful"): ApiResponse<T> => ({
-  status: "success",
-  message,
-  data
-});
-
-const error = (message: string, code = 400): Promise<any> => {
-  return Promise.reject({
-    errorStatus: "error",
-    errorMessage: message,
-    errorCode: code,
-    timestamp: new Date().toISOString()
-  });
-};
+}
 
 // --- API IMPLEMENTATION ---
-
 export const api = {
   auth: {
     login: async (req: LoginRequest): Promise<ApiResponse<User>> => {
-      await delay(null);
-      const user = users.find(u => u.email === req.email);
-      if (user) return success(user, "User sign in successful");
-      throw await error("Invalid credentials", 401);
-    },
-    register: async (req: RegisterRequest): Promise<ApiResponse<User>> => {
-      await delay(null);
-      if (users.find(u => u.email === req.email)) throw await error("User already exists");
-      
-      const newUser: User = {
-        id: crypto.randomUUID(),
-        username: req.username,
-        email: req.email
-      };
-      users.push(newUser);
-      return success(newUser, "User registration successful");
-    }
-  },
-  posts: {
-    getAll: async (page = 0, size = 10, tag?: string): Promise<ApiResponse<PaginatedResponse<Post>>> => {
-      await delay(null);
-      let filtered = [...posts].sort((a, b) => new Date(b.postedAt).getTime() - new Date(a.postedAt).getTime());
-      
-      if (tag) {
-        filtered = filtered.filter(p => p.tags.includes(tag));
+      const response = await request<User>('/api/v1/users/sign-in', {
+        method: 'POST',
+        body: JSON.stringify(req),
+      });
+
+      // Store user data in localStorage on successful login
+      if (response.data) {
+        storage.setUserId(response.data.id);
+        storage.setUser(response.data);
       }
 
-      const start = page * size;
-      const paginated = filtered.slice(start, start + size);
-      
-      return success({
-        content: paginated,
-        page,
-        size,
-        sort: "lastUpdated",
-        totalElements: filtered.length
-      }, "Posts retrieved successfully");
+      return response;
     },
-    getById: async (id: number): Promise<ApiResponse<Post>> => {
-      await delay(null);
-      const post = posts.find(p => p.id === id);
-      if (post) return success(post, "Post retrieved successfully");
-      throw await error("Post not found", 404);
-    },
-    create: async (req: CreatePostRequest): Promise<ApiResponse<Post>> => {
-      await delay(null);
-      const user = users.find(u => u.id === req.authorId);
-      if (!user) throw await error("Author not found", 404);
 
-      const newPost: Post = {
-        id: Math.max(...posts.map(p => p.id), 0) + 1,
-        title: req.title,
-        body: req.body,
-        author: user.username,
-        authorId: user.id,
-        tags: req.tags,
-        postedAt: new Date().toISOString(),
-        lastUpdated: new Date().toISOString(),
-        totalComments: 0
-      };
-      posts.push(newPost);
-      return success(newPost, "Post created successfully");
+    register: async (req: RegisterRequest): Promise<ApiResponse<User>> => {
+      const response = await request<User>('/api/v1/users/register', {
+        method: 'POST',
+        body: JSON.stringify(req),
+      });
+
+      // Store user data in localStorage on successful registration
+      if (response.data) {
+        storage.setUserId(response.data.id);
+        storage.setUser(response.data);
+      }
+
+      return response;
+    },
+
+    logout: (): void => {
+      storage.clear();
+    },
+
+    // Get stored user from localStorage
+    getStoredUser: (): User | null => {
+      return storage.getUser();
+    },
+
+    // Get user profile
+    getProfile: async (userId?: string): Promise<ApiResponse<UserProfile>> => {
+      const id = userId || storage.getUserId();
+      if (!id) {
+        return Promise.reject({
+          errorStatus: 'error',
+          errorMessage: 'User not authenticated',
+          errorCode: 401,
+          timestamp: new Date().toISOString()
+        });
+      }
+      return request<UserProfile>(`/api/v1/users/profile/${id}`);
     }
   },
+
+  posts: {
+    getAll: async (
+      page = 0,
+      size = 10,
+      options?: {
+        sort?: 'id' | 'createdAt' | 'lastUpdated' | 'title';
+        order?: 'ASC' | 'DESC';
+        author?: string;
+        tags?: string[];
+        search?: string;
+      }
+    ): Promise<ApiResponse<PaginatedResponse<Post>>> => {
+      const params = new URLSearchParams();
+      params.append('page', String(page));
+      params.append('size', String(size));
+
+      if (options?.sort) params.append('sort', options.sort);
+      if (options?.order) params.append('order', options.order);
+      if (options?.author) params.append('author', options.author);
+      if (options?.search) params.append('search', options.search);
+      if (options?.tags) {
+        options.tags.forEach(tag => params.append('tags', tag));
+      }
+
+      return request<PaginatedResponse<Post>>(`/api/v1/posts?${params.toString()}`);
+    },
+
+    getById: async (id: number): Promise<ApiResponse<Post>> => {
+      return request<Post>(`/api/v1/posts/${id}`);
+    },
+
+    create: async (req: Omit<CreatePostRequest, 'authorId'> & { authorId?: string }): Promise<ApiResponse<Post>> => {
+      const authorId = req.authorId || storage.getUserId();
+      if (!authorId) {
+        return Promise.reject({
+          errorStatus: 'error',
+          errorMessage: 'User not authenticated',
+          errorCode: 401,
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      return request<Post>('/api/v1/posts', {
+        method: 'POST',
+        body: JSON.stringify({ ...req, authorId }),
+      });
+    },
+
+    update: async (postId: number, req: Omit<UpdatePostRequest, 'authorId'>): Promise<ApiResponse<Post>> => {
+      const authorId = storage.getUserId();
+      if (!authorId) {
+        return Promise.reject({
+          errorStatus: 'error',
+          errorMessage: 'User not authenticated',
+          errorCode: 401,
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      return request<Post>(`/api/v1/posts/${postId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ ...req, authorId }),
+      });
+    },
+
+    delete: async (postId: number): Promise<ApiResponse<void>> => {
+      const authorId = storage.getUserId();
+      if (!authorId) {
+        return Promise.reject({
+          errorStatus: 'error',
+          errorMessage: 'User not authenticated',
+          errorCode: 401,
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      return request<void>(`/api/v1/posts/${postId}`, {
+        method: 'DELETE',
+        body: JSON.stringify({ authorId }),
+      });
+    }
+  },
+
   comments: {
     getByPostId: async (postId: number): Promise<ApiResponse<Comment[]>> => {
-      await delay(null);
-      const postComments = comments.filter(c => c.postId === postId);
-      return success(postComments, "Comments for post retrieved successfully");
+      return request<Comment[]>(`/api/v1/comments/post/${postId}`);
     },
-    create: async (req: CreateCommentRequest): Promise<ApiResponse<Comment>> => {
-      await delay(null);
-      const user = users.find(u => u.id === req.authorId);
-      const postIndex = posts.findIndex(p => p.id === req.postId);
-      
-      if (!user || postIndex === -1) throw await error("Resource not found", 404);
 
-      const newComment: Comment = {
-        id: crypto.randomUUID(),
-        postId: req.postId,
-        author: user.username,
-        content: req.commentContent,
-        createdAt: new Date().toISOString()
-      };
-      
-      comments.push(newComment);
-      posts[postIndex].totalComments += 1; // Update denormalized count
+    getById: async (commentId: string): Promise<ApiResponse<Comment>> => {
+      return request<Comment>(`/api/v1/comments/${commentId}`);
+    },
 
-      return success(newComment, "Comment added to post successfully");
+    create: async (req: Omit<CreateCommentRequest, 'authorId'> & { authorId?: string }): Promise<ApiResponse<Comment>> => {
+      const authorId = req.authorId || storage.getUserId();
+      if (!authorId) {
+        return Promise.reject({
+          errorStatus: 'error',
+          errorMessage: 'User not authenticated',
+          errorCode: 401,
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      return request<Comment>('/api/v1/comments', {
+        method: 'POST',
+        body: JSON.stringify({ ...req, authorId }),
+      });
+    },
+
+    delete: async (commentId: string): Promise<ApiResponse<void>> => {
+      const authorId = storage.getUserId();
+      if (!authorId) {
+        return Promise.reject({
+          errorStatus: 'error',
+          errorMessage: 'User not authenticated',
+          errorCode: 401,
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      return request<void>(`/api/v1/comments/${commentId}`, {
+        method: 'DELETE',
+        body: JSON.stringify({ authorId }),
+      });
     }
   },
+
   metrics: {
-    getAll: async (): Promise<ApiResponse<MetricsMap>> => {
-      await delay(null);
-      return success(mockMetrics);
+    getAll: async (): Promise<ApiResponse<MetricsResponse>> => {
+      try {
+        const response = await fetch(`${BASE_URL}/api/metrics/performance`);
+        if (!response.ok) {
+          throw new Error('Failed to fetch metrics');
+        }
+        const data = await response.json();
+        return { status: 'success', message: 'Metrics retrieved', data };
+      } catch (error: any) {
+        throw {
+          errorStatus: 'error',
+          errorMessage: error.message || 'Failed to fetch metrics',
+          errorCode: 500,
+          timestamp: new Date().toISOString()
+        };
+      }
     },
+
     getSummary: async (): Promise<ApiResponse<MetricsSummary>> => {
-      await delay(null);
-      const values = Object.values(mockMetrics);
-      const totalCalls = values.reduce((sum, m) => sum + m.callCount, 0);
-      const totalFailures = values.reduce((sum, m) => sum + m.failureCount, 0);
-      
-      return success({
-        totalMethodsMonitored: values.length,
-        totalCalls,
-        averageExecutionTimeMs: values.reduce((sum, m) => sum + m.averageExecutionTimeMs, 0) / values.length,
-        overallFailureRate: (totalFailures / totalCalls) * 100
-      });
+      try {
+        const response = await fetch(`${BASE_URL}/api/metrics/performance/summary`);
+        if (!response.ok) {
+          throw new Error('Failed to fetch summary');
+        }
+        const data = await response.json();
+        return { status: 'success', message: 'Summary retrieved', data };
+      } catch (error: any) {
+        throw {
+          errorStatus: 'error',
+          errorMessage: error.message || 'Failed to fetch summary',
+          errorCode: 500,
+          timestamp: new Date().toISOString()
+        };
+      }
     },
-    getSlow: async (thresholdMs = 100): Promise<ApiResponse<{threshold: number, slowMethods: MethodMetricDetail[]}>> => {
-      await delay(null);
-      const slow = Object.entries(mockMetrics)
-        .filter(([_, m]) => m.averageExecutionTimeMs > thresholdMs)
-        .map(([name, m]) => ({ methodName: name, ...m }));
-      
-      return success({
-        threshold: thresholdMs,
-        slowMethods: slow
-      });
+
+    exportToLog: async (): Promise<ApiResponse<{ status: string; message: string }>> => {
+      try {
+        const response = await fetch(`${BASE_URL}/api/metrics/performance/export-log`, {
+          method: 'POST',
+        });
+        if (!response.ok) {
+          throw new Error('Failed to export metrics');
+        }
+        const data = await response.json();
+        return { status: 'success', message: 'Metrics exported', data };
+      } catch (error: any) {
+        throw {
+          errorStatus: 'error',
+          errorMessage: error.message || 'Failed to export metrics',
+          errorCode: 500,
+          timestamp: new Date().toISOString()
+        };
+      }
+    },
+
+    reset: async (): Promise<ApiResponse<{ status: string; message: string }>> => {
+      try {
+        const response = await fetch(`${BASE_URL}/api/metrics/performance/reset`, {
+          method: 'DELETE',
+        });
+        if (!response.ok) {
+          throw new Error('Failed to reset metrics');
+        }
+        const data = await response.json();
+        return { status: 'success', message: 'Metrics reset', data };
+      } catch (error: any) {
+        throw {
+          errorStatus: 'error',
+          errorMessage: error.message || 'Failed to reset metrics',
+          errorCode: 500,
+          timestamp: new Date().toISOString()
+        };
+      }
     }
   }
 };

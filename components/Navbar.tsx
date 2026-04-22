@@ -18,14 +18,22 @@ export const Navbar: React.FC<NavbarProps> = ({ user, onLogout, onNavigate, curr
           <div className="flex items-center cursor-pointer" onClick={() => onNavigate('/')}>
             <span className="text-2xl font-bold text-primary">DevBlog</span>
           </div>
-          
+
           <div className="hidden sm:flex sm:items-center sm:space-x-8">
             <button onClick={() => onNavigate('/')} className={isActive('/')}>Feed</button>
             <button onClick={() => onNavigate('/dashboard')} className={isActive('/dashboard')}>Metrics Dashboard</button>
-            
+
             {user ? (
               <div className="flex items-center space-x-4 ml-4 border-l pl-4 border-gray-200">
-                <span className="text-sm text-gray-500">Hi, {user.username}</span>
+                <button
+                  onClick={() => onNavigate('/profile')}
+                  className={`flex items-center gap-2 ${isActive('/profile')}`}
+                >
+                  <div className="h-7 w-7 rounded-full bg-gradient-to-br from-primary to-purple-600 flex items-center justify-center text-white font-bold text-xs">
+                    {user.username.charAt(0).toUpperCase()}
+                  </div>
+                  <span className="text-sm">{user.username}</span>
+                </button>
                 <button onClick={() => onNavigate('/create')} className="bg-primary text-white px-4 py-2 rounded-md text-sm hover:bg-indigo-700 transition">
                   New Post
                 </button>

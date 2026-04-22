@@ -79,26 +79,42 @@ export interface CreateCommentRequest {
 
 // Metrics Models
 export interface MethodMetric {
-  callCount: number;
-  averageExecutionTimeMs: number;
-  maxExecutionTimeMs: number;
-  minExecutionTimeMs: number;
-  failureCount: number;
-  failureRate: number;
+  methodName: string;
+  totalCalls: number;
+  successfulCalls: number;
+  failedCalls: number;
+  totalExecutionTime: number;
+  minExecutionTime: number;
+  maxExecutionTime: number;
+  averageExecutionTime: number;
+}
+
+// Metrics map: key is method name, value is metric data
+export type MetricsMap = Record<string, MethodMetric>;
+
+export interface MetricsResponse {
+  metrics: MetricsMap;
+  totalMethods: number;
+  timestamp: string;
 }
 
 export interface MetricsSummary {
+  totalFailures: number;
+  overallAverageExecutionTime: string;
+  totalExecutions: number;
   totalMethodsMonitored: number;
-  totalCalls: number;
-  averageExecutionTimeMs: number;
-  overallFailureRate: number;
 }
 
-export interface MethodMetricDetail extends MethodMetric {
-  methodName: string;
+// User Profile Model
+export interface UserProfile {
+  userId: string;
+  username: string;
+  email: string;
+  totalPosts: number;
+  totalComments: number;
+  recentPosts: Post[];
+  recentComments: Comment[];
 }
-
-export type MetricsMap = Record<string, MethodMetric>;
 
 // Helper for UI State
 export enum AuthStatus {
